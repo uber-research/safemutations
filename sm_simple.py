@@ -23,24 +23,24 @@ from torch.nn import Parameter
 import torchvision.models as models
 import argparse
 
-#toy model
+#toy model specified in pytorch
 class netmodel(torch.nn.Module):
     def __init__(self):
         super(netmodel, self).__init__()
         self.w0 = Parameter(torch.Tensor(1))
         self.w1 = Parameter(torch.Tensor(1))
+        #init params uniformly
         self.w0.data.uniform_(-1,1)
         self.w1.data.uniform_(-1,1)
 
-    #demonstrates advantage of smg over reg mut
+    #model with two weights and two outputs
     def forward(self, inputs):
         x = inputs
-        y = 100.0 * self.w0 * inputs[:,0] + 0.1 * self.w1 * inputs[:,1]
         y = torch.stack([100*self.w0*inputs[:,0],0.1*self.w1*inputs[:,1]])
         y = torch.t(y)
         return y.contiguous()
 
-    #function to eeturn current pytorch gradient in same order as genome's flat vector theta
+    #function to return current pytorch gradient in same order as genome's flattened parameter vector
     def extract_grad(self):
         tot_size = self.count_parameters()
         pvec = np.zeros(tot_size, np.float32)
@@ -84,23 +84,31 @@ class netmodel(torch.nn.Module):
             count += param.data.numpy().flatten().shape[0]
         return count
 
-
+#eventual X,Y pairs for training
 states = None
 targets = None
 
 
 
+#model evaluation code (i.e. to calculate fitness)
 def evaluate(model,param):
+
+    #inject new parameters into model
     model.inject_parameters(param)
 
+    #move from numpy into pytorch
     inputs = Variable(torch.from_numpy(states),requires_grad=False)
     y_target = Variable(torch.from_numpy(targets),requires_grad=False)
+
+    #run inputs through model
     y=model(inputs)
 
+    #calculate squared error
     error = (y-y_target)**2
 
     return - error.sum().data.numpy()[0]
 
+#check how much outputs of network have changed from parameter settings p1 changing to p2
 def check_policy_change(p1,p2,model,states):
     model.inject_parameters(p1.copy())
     #TODO: check impact of greater accuracy
@@ -119,12 +127,15 @@ def check_policy_change(p1,p2,model,states):
 
     return divergence_loss.data[0]
 
+#vanilla gaussian perturbation mutation
 def mutate_plain(mutation,params, mag=0.05,**kwargs):
     noise=mag
     verbose = False
     do_policy_check = True
 
+    #create gaussian perturbation
     delta = np.random.randn(*params.shape).astype(np.float32)*np.array(noise).astype(np.float32)
+    #add to parameter vector
     new_params = params + delta
 
     diff = (abs(new_params - params)).sum()
@@ -139,7 +150,7 @@ def mutate_plain(mutation,params, mag=0.05,**kwargs):
 
     return new_params.copy(), delta
 
-
+#SM implementation
 def mutate_sm(mutation,params,
                        model=None,
                        env=None,
@@ -156,15 +167,23 @@ def mutate_sm(mutation,params,
     #grab old policy
     sz = min(100,len(_states))
 
-    experience_states = _states #np.array(random.sample(_states, sz), dtype=np.float32)
+    #experience in this domain = the classification *input* patterns  
+    experience_states = _states
     experience_states = Variable(torch.from_numpy(experience_states), requires_grad=False)
 
     old_policy = model(experience_states)
     num_classes = old_policy.size()[1]
 
+    #SM-ABS
     abs_gradient=False 
+
+    #SM-SO
     second_order=False
+
+    #SM-R
     sm_r = False
+
+    #SM-R uses a line search 
     linesearch=False
 
 
@@ -204,13 +223,13 @@ def mutate_sm(mutation,params,
         grad_output = torch.zeros(*old_policy.size())
 
         for i in range(num_classes):
-            model.zero_grad()	
+            model.zero_grad()
             grad_output.zero_()
-
             grad_output[:, i] = 1.0
 
             old_policy.backward(grad_output, retain_variables=True)
             jacobian[i] = torch.from_numpy(model.extract_grad())
+
         scaling = torch.sqrt(  (jacobian**2).sum(0) )
     else:
         #print "SM-G-ABS"

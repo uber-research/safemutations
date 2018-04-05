@@ -9,6 +9,7 @@ from colors import *
 import argparse
 
 parser = argparse.ArgumentParser()
+#all command line options
 parser.add_argument("--display", help="turn on rendering", action="store_true")
 parser.add_argument("--mutation", help="whether to use regular mutations or SM",choices=['regular','SM-G-SUM','SM-G-ABS','SM-R','SM-G-SO'],default='regular')
 parser.add_argument("--mutation_mag", help="magnitude of mutation operator",default=0.01)
@@ -27,7 +28,7 @@ parser.add_argument("--frameskip",help="frameskip amount (i.e. query agent every
 args = parser.parse_args()
 print(args)
 
-#domain selection
+#domain selection (whether the recurrent parity task or the breadcrumb hard maze)
 if args.domain=='classification':    
     import recurrent_domain as evolution_domain
 elif args.domain=='breadcrumb_maze':
@@ -55,6 +56,7 @@ evolution_domain.setup(domain,params)
 import pygame
 from pygame.locals import *
 
+#pygame only required for hard maze visualization
 pygame.init()
 SZX = SZY = 500
 screen = None
@@ -95,39 +97,46 @@ def render_maze(pop):
         pygame.display.flip()
 
 
-abort_save = False
 if (__name__ == '__main__'):
-    robot = None
 
-    """
-    if args.incentive=='fitness' or args.incentive=='fitness_acc':
-        eval_ind = lambda x,y,z:fitness(x)
-        eval_ind_k = lambda x,y:fitness(x)
-    """
-
+    #initialize empty population
     population = []
+
+    #placeholders to hold champion
     best_fit = -1e9
     best_ind = None
     best_beh = None
 
+    #grab population size
     psize = int(args.pop_size)
 
     #initialize population
     for k in range(psize):
         robot = evolution_domain.individual()
+
+        #initialize random parameter vector
         robot.init_rand()
+
+        #evaluate in domain
         robot.map()
         robot.parent = None
+
+        #add to population
         population.append(robot)
 
-    #tree = eval_pop(population)
+    #solution flag
     solved = False
 
+    #we spent evals looking at the population
     evals = psize
+
+    #parse max evaluations
     max_evals = int(args.max_evals)
 
+    #tournament size
     greediness = 5
 
+    #parse mutation intensity parameter
     mutation_mag = float(args.mutation_mag)
 
     #evolutionary loop
@@ -138,6 +147,7 @@ if (__name__ == '__main__'):
             gc.collect()
 
         if evals % 500 == 0:
+            #logging progress to text file
             print("saving out...",evals)
             f = "%s.progress"%args.save
 
@@ -154,13 +164,16 @@ if (__name__ == '__main__'):
         if (evals % interval == 0) and args.domain=="breadcrumb_maze":
             render_maze(population)
 
+        #tournament selection
         parents = random.sample(population, greediness)
         parent = reduce(lambda x, y: x if x.fitness > y.fitness else y,
                         parents)
 
+        #copy parameter vector
         child = parent.copy()
-
+        #mutate
         child.mutate(mutation=args.mutation,mag=mutation_mag) 
+        #evalute in domain
         child.map()
 
         population.append(child)
@@ -186,6 +199,7 @@ if (__name__ == '__main__'):
                     k.save("%s/child%d" % (args.save,idx))
                     idx += 1
 
+        #remove individual from the pop using a tournament of same size
         to_kill = random.sample(population, greediness)
         to_kill = reduce(lambda x, y: x if x.fitness < y.fitness else y,
                          parents)
