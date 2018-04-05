@@ -171,7 +171,9 @@ def mutate_sm(mutation,params,
     experience_states = _states
     experience_states = Variable(torch.from_numpy(experience_states), requires_grad=False)
 
+    #old_policy in this domain = the outputs this model generated before perturbation
     old_policy = model(experience_states)
+
     num_classes = old_policy.size()[1]
 
     #SM-ABS
@@ -205,23 +207,37 @@ def mutate_sm(mutation,params,
         #print "SM-G-SO"
         np_copy = np.array(old_policy.data.numpy(),dtype=np.float32)
         _old_policy_cached = Variable(torch.from_numpy(np_copy), requires_grad=False)
+
+        #loss = a measure of squared divergence from the old policy
         loss =  ((old_policy-_old_policy_cached)**2).sum(1).mean(0)
+
+        #take a first derivative
         loss_gradient = grad(loss, model.parameters(), create_graph=True)
         flat_gradient = torch.cat([grads.view(-1) for grads in loss_gradient]) #.sum()
 
+        #choose a perturbation direction
         direction = (delta/ np.sqrt((delta**2).sum()))
         direction_t = Variable(torch.from_numpy(direction),requires_grad=False)
+
+        #calculate second derivative along perturbation direction
         grad_v_prod = (flat_gradient * direction_t).sum()
         second_deriv = torch.autograd.grad(grad_v_prod, model.parameters())
+
+        #extract a contiguous version of the second derivative 
         sensitivity = torch.cat([g.contiguous().view(-1) for g in second_deriv])
+
+        #return our re-scaling based on second order sensitivity     
         scaling = torch.sqrt(torch.abs(sensitivity).data)
 
     elif not abs_gradient:
         #print "SM-G-SUM"
         tot_size = model.count_parameters()
+
+        #we want to calculate a jacobian of derivatives of each output's sensitivity to each parameter
         jacobian = torch.zeros(num_classes, tot_size)
         grad_output = torch.zeros(*old_policy.size())
 
+        #do a backward pass for each output
         for i in range(num_classes):
             model.zero_grad()
             grad_output.zero_()
@@ -230,6 +246,7 @@ def mutate_sm(mutation,params,
             old_policy.backward(grad_output, retain_variables=True)
             jacobian[i] = torch.from_numpy(model.extract_grad())
 
+        #summed gradients sensitivity
         scaling = torch.sqrt(  (jacobian**2).sum(0) )
     else:
         #print "SM-G-ABS"
@@ -269,6 +286,8 @@ def mutate_sm(mutation,params,
     search_rounds = 15
     old_policy = old_policy.data.numpy()
 
+    #error function for SM-R to line search over 
+    #requires one forward pass for each iteration of line search
     def search_error(x,raw=False):
         final_delta = delta*x
         final_delta = np.clip(final_delta,-weight_clip,weight_clip)
@@ -284,6 +303,7 @@ def mutate_sm(mutation,params,
 
         return np.sqrt(change-threshold)**2
 
+    #do line search for SM-R to tune mutation
     if linesearch:
         mult = minimize_scalar(search_error,bounds=(0,0.1,3),tol=(threshold/4),options={'maxiter':search_rounds,'disp':True})
         new_params = params+delta*mult.x
@@ -292,8 +312,10 @@ def mutate_sm(mutation,params,
         chg_amt = 1.0
 
     final_delta = delta*chg_amt
+    #limit extreme weight changes for stability
     final_delta = np.clip(final_delta,-weight_clip,weight_clip)  #as 1.0
 
+    #generate new parameter vector
     new_params = params + final_delta
 
     if verbose:
@@ -320,13 +342,13 @@ def main():
 
 
     #domain defenitions
-    states0 = np.array([ [0,1],[0,1]],dtype=np.float32)
+    states0 = np.array([ [0,1],[0,1]],dtype=np.float32)  #easy domain
     targets0 = np.array( [[0,1],[0,1]],dtype=np.float32)
 
-    states1 = np.array([ [1,0],[0,1]],dtype=np.float32)
+    states1 = np.array([ [1,0],[0,1]],dtype=np.float32) #medium domain
     targets1 = np.array( [[1,0],[0,1]],dtype=np.float32)
 
-    states2 = np.array([ [1.0,1.0],[-1.0,-1.0]],dtype=np.float32)
+    states2 = np.array([ [1.0,1.0],[-1.0,-1.0]],dtype=np.float32) #gradient washout task
     targets2 = np.array( [[1,1.0],[-1,-1.0]],dtype=np.float32)
 
     if args.domain == 'easy':
@@ -360,7 +382,9 @@ def main():
     #(you can pipe experiments to .csv)
     print "Iteration, fitness, theta0, theta1"
 
-    #hill-climbing loop
+
+
+    #hill-climbing main loop
     while it<2000:
 
         if fit==None:
